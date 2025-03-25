@@ -12,33 +12,61 @@ export const createProduct = async (req, res) => {
 
 export const getProducts = async (req, res) => {
   try {
-    let { page = 1, limit = 10, sort, order = "asc", ...filters } = req.query;
-    page = parseInt(page);
-    limit = parseInt(limit);
+    let {
+      page = "1",
+      limit = "10",
+      sort,
+      order = "asc",
+      fields,
+      ...filters
+    } = req.query;
 
+    page = parseInt(page) || 1;
+    limit = Math.min(parseInt(limit) || 10, 100);
+
+    const queryFilters = {};
     for (let key in filters) {
-      if (Array.isArray(filters[key])) {
-        filters[key] = { $in: filters[key] };
-      } else if (typeof filters[key] === "object") {
-        for (let operator in filters[key]) {
-          filters[key][operator] = parseFloat(filters[key][operator]);
+      let value = filters[key];
+
+      if (typeof value === "object") {
+        queryFilters[key] = {};
+        for (let operator in value) {
+          if (["gte", "lte", "gt", "lt", "ne"].includes(operator)) {
+            queryFilters[key]["$" + operator] = parseFloat(value[operator]);
+          }
         }
+      } else if (Array.isArray(value)) {
+        queryFilters[key] = { $in: value };
+      } else if (key === "_id") {
+        queryFilters[key] = value;
+      } else if (!isNaN(value)) {
+        queryFilters[key] = parseFloat(value);
       } else {
-        filters[key] = isNaN(filters[key])
-          ? { $in: [filters[key]] }
-          : parseFloat(filters[key]);
+        queryFilters[key] = { $in: [value] };
       }
     }
 
     const sortOptions = {};
-    if (sort) sortOptions[sort] = order === "desc" ? -1 : 1;
+    if (sort) {
+      const sortFields = sort.split(",").map((field) => field.trim());
+      sortFields.forEach((field) => {
+        sortOptions[field] = order === "desc" ? -1 : 1;
+      });
+    }
 
-    const products = await Product.find(filters)
+    let selectFields = {};
+    if (fields) {
+      selectFields = fields.split(",").join(" ");
+    }
+
+    const products = await Product.find(queryFilters)
       .sort(sortOptions)
       .skip((page - 1) * limit)
-      .limit(limit);
+      .limit(limit)
+      .select(selectFields);
 
-    const total = await Product.countDocuments(filters);
+    const total = await Product.countDocuments(queryFilters);
+
     res.json({ total, page, limit, products });
   } catch (error) {
     res.status(500).json({ error: error.message });
